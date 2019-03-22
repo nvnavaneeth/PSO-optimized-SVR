@@ -18,9 +18,12 @@ class PSO_SVR:
                  n_validations = 1):
     
         self.n_svrs = n_svrs
-        self.validation_size = validation_size
-        self.n_validations = n_validations
         self.n_iterations = n_iterations
+        self.inertia_weight = 1
+        self.c1 = 2
+        self.c2 = 2
+        self.n_validations = n_validations
+        self.validation_size = validation_size
 
         # List of all the SVRs (particles).
         self.svrs = []
@@ -59,14 +62,19 @@ class PSO_SVR:
         self.Y = df[['y']].values
 
 
-    def train(self):
+    def run_optimizer(self):
         for i in range(self.n_iterations):
+            print("\nOptimizer step: ", i+1)
+
             # Train the SVRs and obtain the validation errors.
             self.train_svrs()
                 
             # Update the state of the particles (C and epsilon) based on the
             # validation errors.
             self.update_particle_state()
+
+            print("Step best error: ", min(self.val_error))
+            print("Global best error: ", self.g_best_err)
 
 
     def train_svrs(self):
@@ -95,7 +103,7 @@ class PSO_SVR:
                 y_pred = self.svrs[j].predict(x_val)
                 val_error = mean_squared_error(y_val, y_pred)
 
-                # Store the error in the list.
+                # Store the error.
                 val_error_list[j].append(val_error)
 
         # Set final validation error as the mean of per step validation errors.
@@ -103,23 +111,74 @@ class PSO_SVR:
 
     
     def update_particle_state(self):
-        pass
+        # Update the personal best and global best values.
+        for i in range(self.n_svrs):
+            # Update p_best values if required.
+            if self.val_error[i] < self.p_best_err[i]:
+                params = self.svrs[i].get_params()
+                self.p_best_err[i] = self.val_error[i]
+                self.p_best_params[i] = {'C': params['C'],
+                            'epsilon': params['epsilon']}
 
+                # Update g_best values if required.
+                if self.p_best_err[i] < self.g_best_err:
+                    self.g_best_err = self.p_best_err[i]
+                    self.g_best_params = self.p_best_params[i]
+
+        # Debug
+        # print("Error :", self.val_error)
+        # print("p_best_err: ", self.p_best_err)
+        # print("p_best_params: ", self.p_best_params)
+        # print("g_best_err: ", self.g_best_err)
+        # print("g_best_params: ", self.g_best_params)
+
+        # Update the parameters of the SVR.
+        for i in range(self.n_svrs):
+            params = self.svrs[i].get_params()
+
+            # Random numbers to be used in update rule.
+            r1 = np.random.random()
+            r2 = np.random.random()
+
+            # Find new C value.
+            C = params["C"]
+            C_new = self.inertia_weight * C \
+                    + r1*self.c1*(self.p_best_params[i]["C"] - C) \
+                    + r2*self.c2*(self.g_best_params["C"] - C)
+            C_new = max(0.01, C_new)
+
+            # Find new epsilon value.
+            epsilon = params["epsilon"]
+            epsilon_new = self.inertia_weight * epsilon \
+                    + r1*self.c1*(self.p_best_params[i]["epsilon"] - epsilon) \
+                    + r2*self.c2*(self.g_best_params["epsilon"] - epsilon)
+            epsilon_new= max(0.00001, epsilon_new)
+
+            # Update the parameters in SVR.
+            self.svrs[i].set_params(**{'C': C_new, 'epsilon': epsilon_new})
+
+
+    def get_best_values(self):
+        return self.g_best_err, self.g_best_params
 
 #----------------------------PARAMETERS--------------------------------------         
-N_SVRS = 4
-N_ITERATIONS = 3
-N_VALIDATIONS = 5
+DATA_FILE_PATH = "data/train_data.csv"
+N_SVRS = 50
+N_ITERATIONS = 100
+N_VALIDATIONS = 10
 VALIDATION_SIZE = 0.1
 SVR_KERNEL = "rbf"
 #----------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    data_file = sys.argv[1]
-    trainer = PSO_SVR(data_file,
+    pso_optimizer = PSO_SVR(data_file = DATA_FILE_PATH,
                       n_svrs = N_SVRS,
                       kernel = SVR_KERNEL,
                       n_iterations = N_ITERATIONS,
                       validation_size = VALIDATION_SIZE,
                       n_validations = N_VALIDATIONS)
-    trainer.train()
+    pso_optimizer.run_optimizer()
+    best_err, best_params = pso_optimizer.get_best_values()
+    print("Best error :", best_err)
+    print("Best params:", best_params)
+
