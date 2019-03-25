@@ -1,38 +1,12 @@
 import configparser
 import numpy as np
-import pandas as pd
 import pickle
 import sys
-from sklearn.svm import SVR
 from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_squared_error
-
-#------------------------Utility Functions------------------------------------#
-
-def get_feauture_cols_list(feature_cols_str):
-    """
-    Converts the string of comma separated integers to a list of the integers
-    """
-    ftr_cols = feature_cols_str.split(",")
-    ftr_cols = [int(col) for col in ftr_cols]
-
-    return ftr_cols
-    
-
-def load_data(data_config):
-    """
-    Reads data from a csv file and returns X and Y separately.
-    """
-    data_file = data_config["file_path"]
-    feature_cols = get_feauture_cols_list(data_config["feature_cols"])
-    label_col = int(data_config["label_col"])
-
-    data = np.genfromtxt(data_file, delimiter = ",")
-
-    return data[:,feature_cols], data[:,label_col]
-
-#-----------------------------------------------------------------------------#
+from sklearn.svm import SVR
+from utils import load_data
 
 
 #---------------------------PSO_SVR class-------------------------------------#
@@ -92,25 +66,25 @@ class PSO_SVR:
         for i in range(self.n_iterations):
             print("\nOptimizer step: ", i+1)
 
-            # Train the SVRs and obtain the validation errors.
+            # Train the SVRs and obtain the validation scores.
             self.train_svrs()
                 
             # Update the state of the particles (C and gamma) based on the
-            # validation errors.
+            # validation scores.
             self.update_particle_state()
 
-            print("Step best error: ", min(self.val_error))
-            print("Global best error: ", self.g_best_err)
+            print("Step best score: ", max(self.val_score))
+            print("Global best score: ", self.g_best_score)
 
 
     def train_svrs(self):
         """
-        Funtion to train all the SVRs and obtain their validation errors.
+        Funtion to train all the SVRs and obtain their validation scores.
         """
-        # List of list to store the validation error of every SVR. Each sublist
+        # List of list to store the validation score of every SVR. Each sublist
         # corresponds to one svr and each element in the sublist will be
-        # the validation error corresponding to one validation step.
-        val_error_list = [[] for i in range(self.n_svrs)]
+        # the validation score corresponding to one validation step.
+        val_score_list = [[] for i in range(self.n_svrs)]
 
         # Train each 
         for val_step in range(self.n_validations):
@@ -122,15 +96,16 @@ class PSO_SVR:
                 # Train the SVR.
                 self.svrs[j].fit(x_train, y_train.ravel())
 
-                # Get validation error.
-                y_pred = self.svrs[j].predict(x_val)
-                val_error = mean_squared_error(y_val, y_pred)
+                # Get validation score.
+                # y_pred = self.svrs[j].predict(x_val)
+                # val_score = mean_squared_score(y_val, y_pred)
+                val_score = self.svrs[j].score(x_val, y_val)
 
-                # Store the error.
-                val_error_list[j].append(val_error)
+                # Store the score.
+                val_score_list[j].append(val_score)
 
-        # Set final validation error as the mean of per step validation errors.
-        self.val_error = np.mean(val_error_list, axis = 1) 
+        # Set final validation score as the mean of per step validation scores.
+        self.val_score = np.mean(val_score_list, axis = 1) 
 
     
     def update_particle_state(self):
@@ -141,15 +116,15 @@ class PSO_SVR:
         # Update the personal best and global best values.
         for i in range(self.n_svrs):
             # Update p_best values if required.
-            if self.val_error[i] < self.p_best_err[i]:
+            if self.val_score[i] > self.p_best_score[i]:
                 params = self.svrs[i].get_params()
-                self.p_best_err[i] = self.val_error[i]
+                self.p_best_score[i] = self.val_score[i]
                 self.p_best_params[i] = {'C': params['C'],
                             'gamma': params['gamma']}
 
                 # Update g_best values if required.
-                if self.p_best_err[i] < self.g_best_err:
-                    self.g_best_err = self.p_best_err[i]
+                if self.p_best_score[i] > self.g_best_score:
+                    self.g_best_score = self.p_best_score[i]
                     self.g_best_params = params
 
 
@@ -190,13 +165,13 @@ class PSO_SVR:
         """ 
         # List of all the SVRs (particles).
         self.svrs = []
-        # List containing the  best error values of each svr.
-        self.p_best_err= []
-        # List containing the parameters which gave the best error for each SVR.
+        # List containing thebest score values of each svr.
+        self.p_best_score = []
+        # List containing the parameters which gave the best score for each SVR.
         self.p_best_params = []
-        # The global best value of error.
-        self.g_best_err = np.inf
-        # The parameters which gave the global best error value.
+        # The global best value of score.
+        self.g_best_score = 0
+        # The parameters which gave the global best score value.
         self.g_best_params = {}
 
         # Initialize all the particle states and p_best values.
@@ -208,12 +183,10 @@ class PSO_SVR:
                            gamma = gamma)
 
                 self.svrs.append(svr)
-                self.p_best_err.append(np.inf)
+                self.p_best_score.append(0)
                 self.p_best_params.append({"C":0, "gamma": 0})
 
         self.n_svrs = len(self.svrs)
-
-
 
 
     def get_train_val_data(self, validation_step):
@@ -259,10 +232,10 @@ class PSO_SVR:
 
     def get_best_values(self):
         """
-        Returns the best error obtained and the parameters of the SVR
-        which obtained the best error
+        Returns the best score obtained and the parameters of the SVR
+        which obtained the best score
         """
-        return self.g_best_err, self.g_best_params
+        return self.g_best_score, self.g_best_params
 
 #-----------------------------------------------------------------------------#
 
@@ -279,20 +252,19 @@ def train_svr(config_file, svr_params):
     data_config = config["Data"]
     X, Y = load_data(data_config)
 
-    # Normalize X to have 0 mean and 1 standard deviation.
+    # Create the whole model pipeline.
+    # Scaler to scale X to have 0 mean and 1 standard deviation.
     x_scaler = StandardScaler()
-    X = x_scaler.fit_transform(X)
-
-    # Train the SVR
+    # SVR model.
     svr = SVR(**svr_params)
-    svr.fit(X,Y)
 
-    # Save the SVR model and input scaler.
+    pipeline = Pipeline(steps = [('preprocess', x_scaler), ('SVR', svr)])
+    pipeline.fit(X,Y)
+
+    # Save the pipeline.
     save_path = config["Model"]["save_path"]
-    save_entity = {"model": svr, "input_scaler": x_scaler}
-    
     with open(save_path, 'wb') as save_file:
-        pickle.dump(save_entity, save_file)
+        pickle.dump(pipeline, save_file)
 
 #-----------------------------------------------------------------------------#
 
@@ -306,8 +278,8 @@ if __name__ == "__main__":
     print("Running PSO")
     pso_optimizer = PSO_SVR(config_file = config_file)
     pso_optimizer.run_optimizer()
-    best_err, best_params = pso_optimizer.get_best_values()
-    print("\nBest error : ", best_err)
+    best_score, best_params = pso_optimizer.get_best_values()
+    print("\nBest score: ", best_score)
     print("Params of best SVR : ", best_params)
 
     # Use the beset parameters to train an SVR using the whole data.
